@@ -1,0 +1,25 @@
+最近公司的一个小的项目，关于腕表标签中增加，自由落体，静止和移动检测的功能。采用的是ADI公司的ADXL345加速度传感器。在网上和官方的论坛上搜索了一下，使用该芯片的人很多，可供参考的资料也很多。现在分享一点关于ADXL345这款芯片实现自由落体（Free_Fall），移动和静止的初始化程序。以及几点使用要点。
+
+void AdxlInit(void)
+{
+ uint8 FlashTime= 0;
+SingleWriteAdxl(0x2E,0x00);   //该步骤最为重要，因为之前设置过中断的话，会造成中断错误。应先清除后，再使用 
+SingleWriteAdxl(0x31,0x2B); //中断至低电平有效 测量范围正负16g,13位模式
+SingleWriteAdxl(0x2C,0x0A); //速率设定为12.5参考PDF13页 
+SingleWriteAdxl(0x2D,0x08); //选择电源模式 参考PDF24页
+SingleWriteAdxl(0x2F,0x00); //中断输出脚为INT1 FREE_FALL中断输出为INT1       
+SingleWriteAdxl(0x24,0x14);        // Activity活动阀值  (62.5mg/LSB)*0xxx
+SingleWriteAdxl(0x25,0x14);          //THRESH_INACT保存检测静止阀值; (62.5mg/LSB)*0xxx
+SingleWriteAdxl(0x26,0x01);          //TIME_INACT检测静止时间阀值; 2s(1s/LSB)*0xxx
+SingleWriteAdxl(0x27,0x77);     //直流耦合，所有轴参与
+       
+SingleWriteAdxl(0x28,0x08);    // 自由落体阀值  0x05至0x09 300mg-600mg 所有轴参与判断加速度((62.5mg/LSB))
+SingleWriteAdxl(0x29,0x14);    //  自由落体时间 0x14至0x46 100ms-350ms (5ms/LSB)
+        
+SingleWriteAdxl(0x2E,0x14);//  中断使能寄存器  使能Activity中断 使能Free_Fall中断
+
+--------------------- 
+作者：duanfeiteng0814 
+来源：CSDN 
+原文：https://blog.csdn.net/duanfeiteng0814/article/details/51824322 
+版权声明：本文为博主原创文章，转载请附上博文链接！

@@ -1,0 +1,132 @@
+这几天测试了ADXL345，记录一下
+
+1、关于初始化
+
+         一般初始化0x31、0x2d、0x2c、0x2e、0x38就行了，它们分别是设置量程、工作模式、数据速率、中断及FIFO。
+
+2、关于灵敏度。手册上写灵敏度a=256LSB/g，这是在2.5V时测的。在文档的某个角落里写了，3.3V供电时，灵敏度a=265LSB/g。
+
+         另外，3.3V供电比2.5V时噪声要小。
+
+3、注意SPI的时钟。输出数据1600或3200时，要大于等于2M；
+
+         输出数据为800Hz时，要大于等于400kHz。
+
+         SPI时钟最大5M。        
+
+        SPI时钟配置不对会读不到数据或丢数。有次把SPI的时钟配的太快了，读的全是0XFFFF。
+
+4、量程：本来想用正负2g的量程，这档量程在20mm/s时超过2g了。所以选择了正负16g。
+
+而且实测下来这两个量程，在全分辨率模式下，没看出什么差别来。
+
+5、带宽：带宽=数据输出速率/2。
+
+         也就是说数据速率1600Hz时，带宽是800Hz
+
+6、分辨率怎么算出来的？
+
+         以正负16g，10分辨率为例，手册上写分辨率是32mg/LSB
+
+         16*2/210=0.0312g/LSB
+
+7、有次测试时，每秒读1000个数据，但是发现每10个连续的数据都是相同的，最后发现数据输出速率没有初始化，用的默认的100Hz
+
+8、关于偏移值
+
+         这个最坑了，搞了两天才反应过来。以前在网上找的例程初始化后，都要计算这个偏移值。但是我算完偏移值后，读到的数据老是有255或-250这样的数据。
+
+         以为是数据合并的问题，或者是SPI时序不对，总线错误什么的。
+
+         后来发现我的应用不需要计算偏移值。这个在计算倾角什么的，必须要先算一下偏移值。我可以不计算这个初始的偏移值，把它当成是一个直流量；我需要的是相对这个偏移值的变化量，用算法处理一下，就搞定了。
+
+         最终把计算偏移值的代码去掉，读到的值就都恢复正常了。
+
+
+
+下面是我的ADXL345初始化代码。用的SPI。
+
+void SPI_init(void)
+{
+    GPIO_InitTypeDef        GPIO_InitStructure;
+    SPI_InitTypeDef         SPI_InitStructure;
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO | RCC_APB2Periph_GPIOA | RCC_APB2Periph_GPIOB, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_SPI1, ENABLE);
+	
+    GPIO_InitStructure.GPIO_Pin = ADXL345_SPI_CS_PIN ;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOA, &GPIO_InitStructure);
+ 
+    GPIO_InitStructure.GPIO_Pin = ADXL345_SPI_SCK_PIN | ADXL345_SPI_MISO_PIN | ADXL345_SPI_MOSI_PIN;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOA, &GPIO_InitStructure);
+    
+    ADXL345_CS_HIGH();	
+ 
+    SPI_InitStructure.SPI_Direction = SPI_Direction_2Lines_FullDuplex;
+    SPI_InitStructure.SPI_Mode = SPI_Mode_Master;
+    SPI_InitStructure.SPI_DataSize = SPI_DataSize_16b;
+    SPI_InitStructure.SPI_CPOL = SPI_CPOL_High ;
+    SPI_InitStructure.SPI_CPHA = SPI_CPHA_2Edge;
+    SPI_InitStructure.SPI_NSS = SPI_NSS_Soft;
+    SPI_InitStructure.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_32;
+    SPI_InitStructure.SPI_FirstBit = SPI_FirstBit_MSB;
+    SPI_InitStructure.SPI_CRCPolynomial = 7;
+    SPI_Init(ADXL345_SPI, &SPI_InitStructure); 
+    SPI_Cmd(ADXL345_SPI,ENABLE);  
+}
+ 
+u8 ADXL345_read_byte(u8 add)
+{
+	u8 val;
+	
+    ADXL345_CS_LOW();
+ 
+    while (SPI_I2S_GetFlagStatus(ADXL345_SPI, SPI_I2S_FLAG_TXE) == RESET);	
+	SPI_I2S_SendData(ADXL345_SPI, (add | 0x80) << 8);
+   
+    while (SPI_I2S_GetFlagStatus(ADXL345_SPI, SPI_I2S_FLAG_RXNE) == RESET);  
+    val = (SPI_I2S_ReceiveData(ADXL345_SPI) & 0xff); 
+	
+	ADXL345_CS_HIGH();
+	
+	return val;
+}
+ 
+ 
+void ADXL345_write_byte(u8 add,u8 val)
+{
+    ADXL345_CS_LOW();
+ 
+    while (SPI_I2S_GetFlagStatus(ADXL345_SPI, SPI_I2S_FLAG_TXE) == RESET);	
+	SPI_I2S_SendData(ADXL345_SPI, add << 8 | val);
+   
+    while (SPI_I2S_GetFlagStatus(ADXL345_SPI, SPI_I2S_FLAG_RXNE)==RESET);    
+    SPI_I2S_ReceiveData(ADXL345_SPI);
+	
+	ADXL345_CS_HIGH();
+}
+int main(void)
+{
+	if(ADXL345_read_byte(REG_DEVID) == DEVICEID)
+	{
+		ADXL345_write_byte(0x31,0X0b);	//16g
+		ADXL345_write_byte(0x2D,0x08); //powerctrl 
+		ADXL345_write_byte(0x2C,0x0e);	//1600
+		ADXL345_write_byte(0x2E,0x00);  
+		ADXL345_write_byte(0x38,0x00); 
+		ADXL345_write_byte(0x2F,0x00);
+		yanchi(1000);	
+	}	
+	//ADXL345_AUTO_Adjust();
+	InitHardTimer();
+	while (1)
+	{}
+}
+--------------------- 
+作者：无锡的老白 
+来源：CSDN 
+原文：https://blog.csdn.net/fxltsbl007/article/details/80894276 
+版权声明：本文为博主原创文章，转载请附上博文链接！
